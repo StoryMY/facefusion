@@ -1,7 +1,7 @@
 from argparse import ArgumentParser
 from functools import lru_cache
 from types import ModuleType
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy
@@ -11,11 +11,11 @@ import facefusion.jobs.job_store
 from facefusion import config, content_analyser, face_classifier, face_detector, face_landmarker, face_masker, face_recognizer, inference_manager, logger, state_manager, translator, video_manager, voice_extractor
 from facefusion.common_helper import create_int_metavar, get_middle
 from facefusion.download import conditional_download_hashes, conditional_download_sources, resolve_download_url
-from facefusion.face_creator import scale_face
+from facefusion.face_creator import get_one_face, get_static_faces, scale_face
 from facefusion.face_helper import paste_back, warp_face_by_face_landmark_5
 from facefusion.face_masker import create_box_mask, create_occlusion_mask
-from facefusion.face_selector import select_faces
-from facefusion.filesystem import in_directory, is_image, is_video, resolve_relative_path, same_file_extension
+from facefusion.face_selector import select_faces, sort_faces_by_order
+from facefusion.filesystem import filter_image_paths, in_directory, is_image, is_video, resolve_relative_path, same_file_extension
 from facefusion.processors.live_portrait import create_rotation, limit_expression
 from facefusion.processors.modules.expression_restorer import choices as expression_restorer_choices
 from facefusion.processors.modules.expression_restorer.types import ExpressionRestorerInputs
@@ -23,7 +23,7 @@ from facefusion.processors.types import LivePortraitExpression, LivePortraitFeat
 from facefusion.program_helper import find_argument_group
 from facefusion.thread_helper import conditional_thread_semaphore, thread_semaphore
 from facefusion.types import ApplyStateItem, Args, DownloadScope, Face, InferencePool, ModelOptions, ModelSet, ProcessMode, VisionFrame
-from facefusion.vision import read_static_image, read_static_video_frame
+from facefusion.vision import read_static_image, read_static_images, read_static_video_frame
 
 
 @lru_cache()
@@ -103,10 +103,12 @@ def register_args(program : ArgumentParser) -> None:
 		group_processors.add_argument('--expression-restorer-model', help = translator.get('help.model', __package__), default = config.get_str_value('processors', 'expression_restorer_model', 'live_portrait'), choices = expression_restorer_choices.expression_restorer_models)
 		group_processors.add_argument('--expression-restorer-factor', help = translator.get('help.factor', __package__), type = int, default = config.get_int_value('processors', 'expression_restorer_factor', '80'), choices = expression_restorer_choices.expression_restorer_factor_range, metavar = create_int_metavar(expression_restorer_choices.expression_restorer_factor_range))
 		group_processors.add_argument('--expression-restorer-areas', help = translator.get('help.areas', __package__).format(choices = ', '.join(expression_restorer_choices.expression_restorer_areas)), default = config.get_str_list('processors', 'expression_restorer_areas', ' '.join(expression_restorer_choices.expression_restorer_areas)), choices = expression_restorer_choices.expression_restorer_areas, nargs = '+', metavar = 'EXPRESSION_RESTORER_AREAS')
-		facefusion.jobs.job_store.register_step_keys([ 'expression_restorer_model', 'expression_restorer_factor', 'expression_restorer_areas' ])
+		group_processors.add_argument('--expression-restorer-source', help = translator.get('help.source', __package__), default = config.get_str_value('processors', 'expression_restorer_source', 'target'), choices = expression_restorer_choices.expression_restorer_sources)
+		facefusion.jobs.job_store.register_step_keys([ 'expression_restorer_model', 'expression_restorer_factor', 'expression_restorer_areas', 'expression_restorer_source' ])
 
 
 def apply_args(args : Args, apply_state_item : ApplyStateItem) -> None:
+	apply_state_item('expression_restorer_source', args.get('expression_restorer_source', 'target'))
 	apply_state_item('expression_restorer_model', args.get('expression_restorer_model'))
 	apply_state_item('expression_restorer_factor', args.get('expression_restorer_factor'))
 	apply_state_item('expression_restorer_areas', args.get('expression_restorer_areas'))
@@ -131,6 +133,13 @@ def pre_process(mode : ProcessMode) -> bool:
 	if mode == 'stream':
 		logger.error(translator.get('stream_not_supported') + translator.get('exclamation_mark'), __name__)
 		return False
+	if state_manager.get_item('expression_restorer_source') == 'source':
+		try:
+			source_paths = filter_image_paths(state_manager.get_item('source_paths') or [])
+			prepare_source_crop(read_static_images(source_paths[:1]))
+		except ValueError as error:
+			logger.error(str(error), __name__)
+			return False
 	if mode in [ 'output', 'preview' ] and not is_image(state_manager.get_item('target_path')) and not is_video(state_manager.get_item('target_path')):
 		logger.error(translator.get('choose_image_or_video_target') + translator.get('exclamation_mark'), __name__)
 		return False
@@ -156,11 +165,26 @@ def post_process() -> None:
 			common_module.clear_inference_pool()
 
 
-def restore_expression(target_face : Face, target_vision_frame : VisionFrame, temp_vision_frame : VisionFrame) -> VisionFrame:
+def prepare_source_crop(source_vision_frames : List[VisionFrame]) -> VisionFrame:
+	"""Use the largest face in the first source image, aligned with its own landmarks."""
+	if not source_vision_frames:
+		raise ValueError('Source expression transfer requires a source image (-s).')
+	source_vision_frame = source_vision_frames[0]
+	source_face = get_one_face(sort_faces_by_order(get_static_faces([ source_vision_frame ]), 'large-small'))
+	if source_face is None:
+		raise ValueError('No face detected in the first source image for expression transfer.')
+	source_crop, _ = warp_face_by_face_landmark_5(source_vision_frame, source_face.landmark_set.get('5/68'), get_model_options().get('template'), get_model_options().get('size'))
+	return source_crop
+
+
+def restore_expression(target_face : Face, target_vision_frame : VisionFrame, temp_vision_frame : VisionFrame, source_crop : Optional[VisionFrame] = None) -> VisionFrame:
 	model_template = get_model_options().get('template')
 	model_size = get_model_options().get('size')
 	expression_restorer_factor = float(numpy.interp(float(state_manager.get_item('expression_restorer_factor')), [ 0, 100 ], [ 0, 1.2 ]))
-	target_crop_vision_frame, _ = warp_face_by_face_landmark_5(target_vision_frame, target_face.landmark_set.get('5/68'), model_template, model_size)
+	if source_crop is None:
+		target_crop_vision_frame, _ = warp_face_by_face_landmark_5(target_vision_frame, target_face.landmark_set.get('5/68'), model_template, model_size)
+	else:
+		target_crop_vision_frame = source_crop
 	temp_crop_vision_frame, affine_matrix = warp_face_by_face_landmark_5(temp_vision_frame, target_face.landmark_set.get('5/68'), model_template, model_size)
 	box_mask = create_box_mask(temp_crop_vision_frame, state_manager.get_item('face_mask_blur'), (0, 0, 0, 0))
 	crop_masks =\
@@ -273,8 +297,9 @@ def process_frame(inputs : ExpressionRestorerInputs) -> ProcessorOutputs:
 	target_faces = select_faces(reference_vision_frame, source_vision_frames, target_vision_frames)
 
 	if target_faces:
+		source_crop = prepare_source_crop(source_vision_frames) if state_manager.get_item('expression_restorer_source') == 'source' else None
 		for target_face in target_faces:
 			target_face = scale_face(target_face, target_vision_frame, temp_vision_frame)
-			temp_vision_frame = restore_expression(target_face, target_vision_frame, temp_vision_frame)
+			temp_vision_frame = restore_expression(target_face, target_vision_frame, temp_vision_frame, source_crop)
 
 	return temp_vision_frame, temp_vision_mask

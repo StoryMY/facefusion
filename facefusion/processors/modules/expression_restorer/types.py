@@ -13,4 +13,6 @@ ExpressionRestorerInputs = TypedDict('ExpressionRestorerInputs',
 
 ExpressionRestorerModel = Literal['live_portrait']
 
+ExpressionRestorerSource = Literal['target', 'source']
+
 ExpressionRestorerArea = Literal['upper-face', 'lower-face']

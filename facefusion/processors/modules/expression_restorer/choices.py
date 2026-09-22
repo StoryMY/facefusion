@@ -1,7 +1,9 @@
 from typing import List, Sequence, get_args
 
 from facefusion.common_helper import create_int_range
-from facefusion.processors.modules.expression_restorer.types import ExpressionRestorerArea, ExpressionRestorerModel
+from facefusion.processors.modules.expression_restorer.types import ExpressionRestorerArea, ExpressionRestorerModel, ExpressionRestorerSource
+
+expression_restorer_sources : List[ExpressionRestorerSource] = list(get_args(ExpressionRestorerSource))
 
 expression_restorer_models : List[ExpressionRestorerModel] = list(get_args(ExpressionRestorerModel))
 

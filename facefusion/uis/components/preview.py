@@ -103,6 +103,7 @@ def listen() -> None:
 		'face_mask_types_checkbox_group',
 		'face_mask_areas_checkbox_group',
 		'face_mask_regions_checkbox_group',
+		'expression_restorer_source_dropdown',
 		'expression_restorer_areas_checkbox_group'
 	]):
 		ui_component.change(update_preview_image, inputs = [ preview_mode_dropdown, preview_resolution_dropdown, preview_frame_slider ], outputs = PREVIEW_IMAGE)
