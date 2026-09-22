@@ -51,7 +51,7 @@ def conditional_get_source_audio_frame(frame_number : int) -> AudioFrame:
 
 
 def conditional_get_source_voice_frame(frame_number : int) -> AudioFrame:
-	if state_manager.get_item('workflow_mode') == 'image-to-video':
+	if state_manager.get_item('workflow_mode') == 'image-to-video' and 'lip_syncer' in (state_manager.get_item('processors') or []):
 		trim_frame_start, _ = restrict_trim_frame(state_manager.get_item('target_path'), state_manager.get_item('trim_frame_start'), state_manager.get_item('trim_frame_end'))
 		temp_video_fps = restrict_video_fps(state_manager.get_item('target_path'), state_manager.get_item('output_video_fps'))
 		source_audio_path = get_first(filter_audio_paths(state_manager.get_item('source_paths')))

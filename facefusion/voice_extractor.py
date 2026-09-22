@@ -119,6 +119,9 @@ def collect_model_downloads() -> Tuple[DownloadSet, DownloadSet]:
 
 
 def pre_check() -> bool:
+	if 'lip_syncer' not in (state_manager.get_item('processors') or []):
+		return True
+
 	model_hash_set, model_source_set = collect_model_downloads()
 
 	return conditional_download_hashes(model_hash_set) and conditional_download_sources(model_source_set)

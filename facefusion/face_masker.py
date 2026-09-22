@@ -150,14 +150,15 @@ def create_static_model_set(download_scope : DownloadScope) -> ModelSet:
 
 
 def get_inference_pool() -> InferencePool:
-	model_names = [ state_manager.get_item('face_occluder_model'), state_manager.get_item('face_parser_model') ]
 	_, model_source_set = collect_model_downloads()
+	model_names = list(model_source_set)
 
 	return inference_manager.get_inference_pool(__name__, model_names, model_source_set)
 
 
 def clear_inference_pool() -> None:
-	model_names = [ state_manager.get_item('face_occluder_model'), state_manager.get_item('face_parser_model') ]
+	_, model_source_set = collect_model_downloads()
+	model_names = list(model_source_set)
 	inference_manager.clear_inference_pool(__name__, model_names)
 
 
@@ -167,12 +168,12 @@ def collect_model_downloads() -> Tuple[DownloadSet, DownloadSet]:
 	model_source_set = {}
 
 	for face_occluder_model in [ 'xseg_1', 'xseg_2', 'xseg_3' ]:
-		if state_manager.get_item('face_occluder_model') in [ 'many', face_occluder_model ]:
+		if 'occlusion' in (state_manager.get_item('face_mask_types') or []) and state_manager.get_item('face_occluder_model') in [ 'many', face_occluder_model ]:
 			model_hash_set[face_occluder_model] = model_set.get(face_occluder_model).get('hashes').get('face_occluder')
 			model_source_set[face_occluder_model] = model_set.get(face_occluder_model).get('sources').get('face_occluder')
 
 	for face_parser_model in [ 'bisenet_resnet_18', 'bisenet_resnet_34' ]:
-		if state_manager.get_item('face_parser_model') == face_parser_model:
+		if 'region' in (state_manager.get_item('face_mask_types') or []) and state_manager.get_item('face_parser_model') == face_parser_model:
 			model_hash_set[face_parser_model] = model_set.get(face_parser_model).get('hashes').get('face_parser')
 			model_source_set[face_parser_model] = model_set.get(face_parser_model).get('sources').get('face_parser')
 

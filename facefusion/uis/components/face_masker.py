@@ -149,8 +149,13 @@ def update_face_parser_model(face_parser_model : FaceParserModel) -> gradio.Drop
 
 
 def update_face_mask_types(face_mask_types : List[FaceMaskType]) -> Tuple[gradio.CheckboxGroup, gradio.CheckboxGroup, gradio.CheckboxGroup, gradio.Slider, gradio.Group]:
+	previous_face_mask_types = state_manager.get_item('face_mask_types')
+	face_masker.clear_inference_pool()
 	face_mask_types = face_mask_types or facefusion.choices.face_mask_types
 	state_manager.set_item('face_mask_types', face_mask_types)
+	if not face_masker.pre_check():
+		face_mask_types = previous_face_mask_types
+		state_manager.set_item('face_mask_types', face_mask_types)
 	has_box_mask = 'box' in face_mask_types
 	has_area_mask = 'area' in face_mask_types
 	has_region_mask = 'region' in face_mask_types
